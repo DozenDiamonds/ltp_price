@@ -34,6 +34,7 @@ const start = async () => {
   let symbols = await userSelectedStocks()
 
   console.log("Symbols loaded:", symbols.length)
+  console.log(symbols);
 
   if (!symbols.length) {
     throw new Error("No symbols available for price feed")
