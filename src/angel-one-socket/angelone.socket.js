@@ -69,51 +69,76 @@ export const subscribeMissingSymbols = async (symbols) => {
 }
 
 export const startPriceFeed = async ({ jwtToken, feedToken, symbols, onOpen }) => {
-
   subscribedTokens.clear()
   Object.keys(lastPriceMap).forEach(k => delete lastPriceMap[k])
-
   updateSymbolMap(symbols)
 
+  let NSE_TOKENS = [];
+  let BSE_TOKENS = [];
+
+  symbols.forEach(s => {
+    if (s.ticker_exchange === "NSE") {
+      NSE_TOKENS.push(String(s.stock_security_code));
+    } else if (s.ticker_exchange === "BSE") {
+      BSE_TOKENS.push(String(s.stock_security_code));
+    }
+  });
   ws = new WebSocketV2({
     jwttoken: jwtToken,
-    apikey: process.env.ANGEL_API_KEY,
-    clientcode: process.env.ANGEL_CLIENT_ID,
+    apikey: "71VZuEnv",
+    clientcode: "S608s02876",
     feedtype: feedToken
   })
+  ws
+    .connect()
+    .then(() => {
+      ws.fetchData({
+        correlationID: "bse_correlation_id",
+        action: 1,
+        mode: 1,
+        exchangeType: 3,
+        tokens: BSE_TOKENS,
+      });
+      ws.fetchData({
+        correlationID: "nse_correlation_id",
+        action: 1,
+        mode: 1,
+        exchangeType: 1,
+        tokens: NSE_TOKENS,
+      });
+      ws.on("open", () => {
+        console.log("Angel websocket connected")
+        if (onOpen) onOpen()
+      })
 
-  ws.on("open", () => {
-    console.log("Angel websocket connected")
-    if (onOpen) onOpen()
-  })
+      ws.on("tick", async (data) => {
 
-  ws.on("tick", async (data) => {
+        if (!data || data === "pong") return
+        const token = Number(String(data.token).replace(/"/g, ""))
+        const meta = symbolMap[token]
+        if (!meta) return
 
-    if (!data || data === "pong") return
+        const price = Number(data.last_traded_price) / 100
+        if (!price) return
 
-    const token = Number(String(data.token).replace(/"/g, ""))
-    const meta = symbolMap[token]
-    if (!meta) return
+        if (lastPriceMap[token] === price) return
+        lastPriceMap[token] = price
 
-    const price = Number(data.last_traded_price) / 100
-    if (!price) return
+        const tickerKey = `${meta.symbol}-${meta.exchange}`
+        await publishToRedis(tickerKey, price)
+      })
 
-    if (lastPriceMap[token] === price) return
-    lastPriceMap[token] = price
+      ws.on("close", () => {
+        console.error("Angel price feed closed")
+      })
 
-    const tickerKey = `${meta.symbol}-${meta.exchange}`
-    await publishToRedis(tickerKey, price)
-  })
+      ws.on("error", (err) => {
+        console.error("Angel WebSocket error", err)
+      })
+    }).catch((err) => {
+      console.error("Error connecting Angel websocket", err)
+    });
 
-  ws.on("close", () => {
-    console.error("Angel price feed closed")
-  })
-
-  ws.on("error", (err) => {
-    console.error("Angel WebSocket error", err)
-  })
-
-  await ws.connect()
 
   await subscribeMissingSymbols(symbols)
 }
